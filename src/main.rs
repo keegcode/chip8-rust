@@ -4,19 +4,22 @@ use std::io::Read;
 use std::thread;
 use std::fs;
 
+use sdl2::event::Event;
 use sdl2::pixels::Color;
-use sdl2::rect::Point;
-use sdl2::{event::Event};
+use sdl2::pixels::PixelFormatEnum;
+use sdl2::rect::Rect;
 
 const SCREEN_WIDTH: u16 = 64;
 const SCREEN_HEIGHT: u16 = 32;
 const REFRESH_RATE: f32 = 1.0 / 60.0;
+const SCALE: u16 = 40;
+
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     
     let path = &args[1];
 
-    let mut ram: Vec<u8> = Vec::from([
+    let mut font: Vec<u8> = Vec::from([
         0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
         0x20, 0x60, 0x20, 0x20, 0x70, // 1
         0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -34,36 +37,43 @@ fn main() -> Result<(), String> {
         0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
         0xF0, 0x80, 0xF0, 0x80, 0x80  // F
     ]);
-    
-    let mut pc: usize = ram.len();
+
+    let mut pixels: Vec<Vec<u8>> = vec![vec![0; SCREEN_HEIGHT as usize]; SCREEN_WIDTH as usize];
+    let mut ram = vec![0; 4096];
+
+    for (pos, e) in font.iter().enumerate() { 
+        ram[pos] = *e;   
+    }
+
+    let mut pc: u16 = 0x200; 
+
+    ram.resize(pc as usize, 0);
+
     let mut i: u16 = 0;
     let mut delay_timer: u8 = 255;
     let mut sound_timer: u8 = 255;
     let mut v_registers: Vec<u8> = vec![0; 16];
     let stack: Vec<u16> = Vec::new();
-
-    let sdl_context = sdl2::init()?;
-
-    let video_subsystem = sdl_context.video()?;
-    let mut event_pump = sdl_context.event_pump()?;
-
-    let window = video_subsystem
-        .window("CHIP-8", SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
+    
+    let sdl = sdl2::init()?;
+    let video = sdl.video()?;
+    let window = video
+        .window("CHIP-8", (SCREEN_WIDTH * SCALE) as u32, (SCREEN_HEIGHT * SCALE) as u32)
+        .fullscreen()
         .position_centered()
-        .opengl()
         .build()
         .map_err(|e| e.to_string())?;
+    let mut event_pump = sdl
+        .event_pump()
+        .map_err(|e| e.to_string())?;
+    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
 
     fs::File::open(path)
         .map_err(|e| e.to_string())?
         .read_to_end(&mut ram)
         .map_err(|e| e.to_string())?;
 
-    ram.resize(4096, 0);
-    
-    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    
-    'render: while delay_timer > 0 && sound_timer > 0 {
+    'render: loop {
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit {..} => break 'render,
@@ -71,66 +81,76 @@ fn main() -> Result<(), String> {
             }
         }
 
-        let instruction = u16::from((u16::from(ram[pc]) << 8) | u16::from(ram[pc + 1]));
+        let high = ram[pc as usize];
+        let low = ram[(pc + 1) as usize];
         pc += 2;
 
-        match get_n_bits(instruction, 12, 4) {
+        match high >> 4 {
             0x0 => {
-                match get_n_bits(instruction, 0, 12) {
+                match low {
                     0xE0 => canvas.clear(),
                     _ => ()
                 }
             },
             0x1 => {
-                pc = get_n_bits(instruction, 0, 12) as usize;
+                pc = u16::from(high & 0x0F) << 8 | u16::from(low);
             },
             0x6 => {
-                let register = get_n_bits(instruction, 8, 4);
-                let value = get_n_bits(instruction, 0, 8);
-                v_registers[register as usize] = value as u8; 
+                let register = high & 0x0F;
+                v_registers[register as usize] = low;
             }
             0x7 => {
-                let register = get_n_bits(instruction, 8, 4);
-                let value = get_n_bits(instruction, 0, 8);
-                v_registers[register as usize] = value as u8;            
+                let register = high & 0x0F; 
+                v_registers[register as usize] += low;            
             },
             0xA => {
-                let value = get_n_bits(instruction, 0, 12);
-                println!("{}", value);
-                i = value % 80;
+                i = u16::from(high & 0x0F) << 8 | u16::from(low);
             },
             0xD => {
-                let mut x = get_n_bits(instruction, 8, 4) % SCREEN_WIDTH;
-                let mut y = get_n_bits(instruction, 4, 4) % SCREEN_HEIGHT;
-
+                let mut y = u16::from(v_registers[(low >> 4) as usize]) % SCREEN_HEIGHT;
+                
                 v_registers[0xF] = 0;
-
-                canvas.set_draw_color(Color::RGB(255, 255, 255));
-
-                let n = get_n_bits(instruction, 0, 4);
-
-                for row in 0..n {
-                    if y > SCREEN_HEIGHT {
+                
+                let rows = u16::from(low & 0x0F); 
+                
+                for pos in i..(i + rows) {
+                    let mut x = u16::from(v_registers[(high & 0x0F) as usize]) % SCREEN_WIDTH; 
+                    
+                    if y == SCREEN_HEIGHT {
                         break;
                     }
-                    let sprite = ram[usize::from(i + row)];
-                    for pos in 0..7 {
-                        if x > SCREEN_WIDTH {
+
+                    let sprite = ram[pos as usize];
+
+                    for n in (0..8).rev() {
+                        if x == SCREEN_WIDTH {
                             break;
                         }
-                        let point = Point::new(x as i32, y as i32);
-                        canvas.draw_point(point)?;
+                     
+                        let bit = (sprite >> n) & 1;
+                        
+                        let color = match bit ^ pixels[x as usize][y as usize] {
+                            1 => 255,
+                            0 => 0,
+                            _ => 0,
+                        };
+                        
+                        v_registers[0xF] = u8::from(bit & pixels[x as usize][y as usize]);
+                        
+                        pixels[x as usize][y as usize] ^= bit;
+                        
+                        canvas.set_draw_color(Color::RGB(color, color, color));
+                        canvas.fill_rect(Rect::new((x * SCALE) as i32, (y * SCALE) as i32, SCALE as u32, SCALE as u32))?;
+                        
                         x += 1;
                     }
-                    y += 1; 
+                    y += 1;
                 }
             }
             _ => (),
         }
 
         canvas.present();
-        delay_timer -= 1;
-        sound_timer -= 1;
         thread::sleep(time::Duration::from_secs_f32(REFRESH_RATE));
     }
 
