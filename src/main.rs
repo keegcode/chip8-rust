@@ -6,6 +6,7 @@ mod display;
 mod emulator;
 mod chip8;
 mod fonts;
+mod keyboard;
 
 const SCREEN_WIDTH: u16 = 64;
 const SCREEN_HEIGHT: u16 = 32;

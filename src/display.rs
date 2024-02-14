@@ -1,6 +1,6 @@
-use std::thread;
-use std::time;
 use sdl2::{pixels::Color, rect::Rect, render::WindowCanvas, Sdl, event::Event};
+
+use super::keyboard;
 
 pub struct Display {
     pub width: u16,
@@ -31,7 +31,7 @@ pub fn create(width: u16, height: u16, scale: u16) -> Result<Display, String> {
 }
 
 impl Display {
-    pub fn start_render<F>(&self, mut f: F) -> Result<(), String> where F: FnMut(&mut DisplayRenderer) {
+    pub fn start_render<F>(&self, mut f: F) -> Result<(), String> where F: FnMut(&mut DisplayRenderer, &mut keyboard::Keyboard) {
         let video = self.sdl.video()?;
 
         let window = video
@@ -55,16 +55,23 @@ impl Display {
             height: self.height,
             scale: self.scale,
         };
+        
+        let mut keyboard = keyboard::create(); 
 
         'render: loop {
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit {..} => break 'render,
-                    _ => (),
-                }
+                    Event::KeyDown {scancode, ..} => keyboard.key_down(scancode.unwrap()),
+                    Event::KeyUp {scancode, ..} => keyboard.key_up(scancode.unwrap()),
+                    _ => true,
+                };
             }
-            f(&mut renderer);
-            thread::sleep(time::Duration::from_secs_f32(1.0 / 60.0));
+
+            match keyboard.is_waiting_for_press() {
+                true => (),
+                false => f(&mut renderer, &mut keyboard)
+            }
         }
 
         Ok(())
