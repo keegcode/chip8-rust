@@ -1,12 +1,10 @@
 use std::env;
 
-use emulator::Emulator;
-
 mod display;
-mod emulator;
-mod chip8;
 mod fonts;
 mod keyboard;
+mod audio;
+mod cpu;
 
 const SCREEN_WIDTH: u16 = 64;
 const SCREEN_HEIGHT: u16 = 32;
@@ -16,14 +14,20 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     
     let path = &args[1];
-     
-    let display = display::create(SCREEN_WIDTH, SCREEN_HEIGHT, SCALE)?;
-    let mut chip8_emulator = chip8::init(display)?;
 
-    chip8_emulator
-        .load_fonts(fonts::FONTS)?
-        .load_rom(path)?
-        .run()?;
+    let audio = Audio::init();
+    let display = Display::init();
+    let processor = CPU::init();
+    let keyboard = Keyboard::init();
+
+    while {
+        let cpu = processor.tick(keyboard)?;
+
+
+        cpu.start_delay();
+        audio.play_sound(state.sound_timer);
+        display.redraw_screen(&mut cpu.vram);
+    }   
 
     Ok(())
 }
