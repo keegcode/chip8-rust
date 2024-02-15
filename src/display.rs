@@ -1,130 +1,51 @@
-use sdl2::{pixels::Color, rect::Rect, render::WindowCanvas, Sdl, event::Event};
+use std::thread::yield_now;
 
-use super::keyboard;
+use sdl2::{pixels::Color, rect::Rect, Sdl, event::Event};
 
 pub struct Display {
-    pub width: u16,
-    pub height: u16,
-    pub scale: u16,
-    sdl: Sdl,
-}
-
-pub struct DisplayRenderer {
-    pixels: Vec<Vec<u8>>,
-    canvas: WindowCanvas,
-    width: u16,
-    height: u16,
+    canvas: sdl2::render::Canvas<sdl2::video::Window>,
+    event_pump: sdl2::EventPump,
     scale: u16,
-}
-
-pub struct Sprite<'a> {
-    pub x: i32,
-    pub y: i32,
-    pub len: u16,
-    pub data: &'a [u8],
-    pub addr: u16,
-}
-
-pub fn create(width: u16, height: u16, scale: u16) -> Result<Display, String> {
-        let sdl = sdl2::init()?;
-        Ok(Display{width, height, scale, sdl}) 
+    height: u8,
+    width: u8,
 }
 
 impl Display {
-    pub fn start_render<F>(&self, mut f: F) -> Result<(), String> where F: FnMut(&mut DisplayRenderer, &mut keyboard::Keyboard) {
-        let video = self.sdl.video()?;
+    pub fn create(width: u8, height: u8, scale: u16) -> Result<Display, String> {
+            let sdl = sdl2::init()?;
+            let video = sdl.video()?;
 
-        let window = video
-            .window("", (self.width * self.scale) as u32, (self.height * self.scale) as u32)
-            .position_centered()
-            .build()
-            .map_err(|e| e.to_string())?;
+            let window = video
+                .window("", (width as u16 * scale) as u32, (height as u16 * scale) as u32)
+                .position_centered()
+                .build()
+                .map_err(|e| e.to_string())?;
         
-        let mut event_pump = self.sdl
-            .event_pump()
-            .map_err(|e| e.to_string())?;
+            let event_pump = sdl
+                .event_pump()
+                .map_err(|e| e.to_string())?;
         
-        let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-        
-        let pixels: Vec<Vec<u8>> = vec![vec![0; self.height as usize]; self.width as usize];
-        
-        let mut renderer = DisplayRenderer{
-            pixels,
-            canvas, 
-            width: self.width,
-            height: self.height,
-            scale: self.scale,
-        };
-        
-        let mut keyboard = keyboard::create(); 
+            let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
 
-        'render: loop {
-            for event in event_pump.poll_iter() {
-                match event {
-                    Event::Quit {..} => break 'render,
-                    Event::KeyDown {scancode, ..} => keyboard.key_down(scancode.unwrap()),
-                    Event::KeyUp {scancode, ..} => keyboard.key_up(scancode.unwrap()),
-                    _ => true,
-                };
-            }
-
-            match keyboard.is_waiting_for_press() {
-                true => (),
-                false => f(&mut renderer, &mut keyboard)
+            Ok(Display{canvas, event_pump, scale, height, width}) 
+    }
+    pub fn poll(&mut self) -> Option<Event> {
+        self.event_pump.poll_event()
+    }
+    pub fn draw(&mut self, vram: &Vec<Vec<u8>>)-> Result<(), String> {
+        for (y, row) in vram.iter().enumerate() {
+            for (x, col)  in row.iter().enumerate() {
+                self.canvas.set_draw_color(col.eq(&1).then(|| Color::WHITE).unwrap_or(Color::BLACK));
+                self.canvas.fill_rect(Rect::new((x * self.scale as usize) as i32, (y * self.scale as usize) as i32, self.scale as u32, self.scale as u32))?;
             }
         }
-
-        Ok(())
-    }
-}
-
-impl DisplayRenderer {
-    pub fn write_sprite(&mut self, sprite: Sprite, collision_register: &mut u8) -> Result<(), String> {
-        *collision_register = 0;
-        let mut y = sprite.y % self.height as i32;
-        for pos in sprite.addr..(sprite.addr + sprite.len) {
-            let mut x = sprite.x % self.width as i32; 
-                    
-            if y == self.height as i32 {
-                break;
-            }
-
-            let sprite = sprite.data[pos as usize];
-
-            for n in (0..8).rev() {
-                if x == self.width as i32 {
-                    break;
-                }
-                     
-                let bit = (sprite >> n) & 1;
-                        
-                let color = match bit ^ self.pixels[x as usize][y as usize] {
-                    1 => 255,
-                    0 => 0,
-                    _ => 0,
-                };
-                        
-                *collision_register = u8::from(bit & self.pixels[x as usize][y as usize]);
-                        
-                self.pixels[x as usize][y as usize] ^= bit;
-                self.canvas.set_draw_color(Color::RGB(color, color, color));
-                self.canvas.fill_rect(
-                    Rect::new(x * self.scale as i32,
-                    y * self.scale as i32 , 
-                    self.scale as u32, 
-                    self.scale as u32
-                ))?;
-
-                x += 1;
-            }
-            y += 1;
-        }
-        Ok(())
-    }
-    pub fn clear(&mut self) -> () {
-        self.canvas.clear();
-    }
-    pub fn refresh(&mut self) -> () {
         self.canvas.present();
+        Ok(())
+    }
+    pub fn get_window_size(&self) -> (u8, u8) {
+        (self.width, self.height)
     }
 }
+
+
+

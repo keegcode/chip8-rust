@@ -1,10 +1,12 @@
-use std::{fs, io::Write};
+use std::borrow::BorrowMut;
+use std::io::Read;
+use std::fs;
 
 use super::fonts;
 
 pub struct CPU {
     ram: Vec<u8>,
-    pub vram: Vec<u8>,
+    pub vram: Vec<Vec<u8>>,
     pub vram_updated: bool,
     i: u16,
     pub delay_timer: u8,
@@ -13,11 +15,11 @@ pub struct CPU {
     v: Vec<u8>,
     stack: Vec<usize>,
     pub waiting_for_press: bool,
+    window: (u8, u8),
 }
+
 pub enum ProgramCounter {
     Next,
-    Return,
-    Call(u16),
     Jump(u16),
     Skip,
     Wait,
@@ -25,59 +27,52 @@ pub enum ProgramCounter {
 }
 
 impl CPU {
-    pub fn init(rom: &str) -> Result<CPU, String> {
+    pub fn init(rom: &str, (w, h): (u8, u8)) -> Result<CPU, String> {
         let mut cpu = CPU {
-            ram: vec![0; 4096],
-            vram: vec![],
+            ram: Vec::with_capacity(4096),
+            vram: vec![vec![0; w as usize]; h as usize],
             vram_updated: false,
             i: 0,
             delay_timer: 0,
             sound_timer: 0,
             pc: 0x200,
-            v: vec![0; 15],
+            v: vec![0; 16],
             stack: Vec::new(),
-            waiting_for_press: false
+            waiting_for_press: false,
+            window: (w, h),
         };
         
-        for (i, data) in fonts::FONTS.into_iter().enumerate() {
-            cpu.ram[i] = data.clone();
-        }
+        cpu.ram.append(&mut Vec::from(fonts::FONTS));
+        cpu.ram.resize(cpu.pc, 0);
 
-        fs::read(rom)
-            .map_err(|err| err.to_string())?
-            .write_all(&cpu.ram[cpu.pc..])
-            .map_err(|err| err.to_string())?;
+        fs::File::open(rom)
+            .map_err(|e| e.to_string())?
+            .read_to_end(&mut cpu.ram)
+            .map_err(|e| e.to_string())?;
+        
+        cpu.ram.resize(4096, 0);
         
         Ok(cpu)
     }
 
-    pub fn tick(&mut self, keypad: &[u8; 17]) -> Result<&Self, String> {
+    pub fn tick(&mut self, keypad: &[u8; 17]) -> Result<&mut Self, String> {
+        self.vram_updated = false; 
+        
         let counter = self.execute_op(keypad);
-
+        
         match counter {
             ProgramCounter::Next => self.next_op(),
-            ProgramCounter::Return => self.return_from_stack(),
-            ProgramCounter::Call(op) => self.call_op(op),
             ProgramCounter::Jump(op) => self.jump_to_op(op),
             ProgramCounter::Skip => self.skip_op(),
             ProgramCounter::Wait => (),
             _ => ()
         }
 
-        Ok(&self)
+        Ok(self)
     }
     
     pub fn next_op(&mut self) -> () {
         self.pc += 2;
-    }
-
-    pub fn return_from_stack(&mut self) -> () {   
-        self.pc = self.stack.pop().unwrap()
-    }
-
-    pub fn call_op (&mut self, op: u16) -> () {
-        self.stack.push(self.pc);
-        self.pc = op as usize;
     }
 
     pub fn jump_to_op(&mut self, op: u16) {
@@ -89,7 +84,7 @@ impl CPU {
     }
     
     pub fn execute_op(&mut self, keypad: &[u8; 17]) -> ProgramCounter {
-            let (high, low)= (self.ram[self.pc], self.ram[self.pc + 2]); 
+            let (high, low)= (self.ram[self.pc], self.ram[self.pc + 1]); 
             
             let op = high >> 4; 
             let x: usize = (high & 0x0F).into();
@@ -97,8 +92,8 @@ impl CPU {
             let n = low & 0x0F;
             let nn = low; 
             let nnn = u16::from(high & 0x0F) << 8 | u16::from(low);
-            
-            match (op, x, n, y) {
+
+            match (op, x, y, n) {
                 (0x0, 0x0, 0xe, 0x0) => {
                     self.op_cls()
                 }
@@ -109,7 +104,7 @@ impl CPU {
                     self.op_jp_addr(nnn)
                 },
                 (0x2, _, _, _) => {
-                    self.op_call_addr()
+                    self.op_call_addr(nnn)
                 },
                 (0x3, _, _, _) => {
                     self.op_3xkk(x, nn)
@@ -205,20 +200,19 @@ impl CPU {
             }
     }
     
-    fn get_next_op(&self) {}
-    
     fn op_cls(&mut self) -> ProgramCounter {
-        self.vram.clear();
+        self.vram.iter_mut().for_each(|v| v.fill(0));
         self.vram_updated = true;
         ProgramCounter::Next
     }
     
-    fn op_ret(&self) -> ProgramCounter {
-        ProgramCounter::Return
+    fn op_ret(&mut self) -> ProgramCounter {
+        ProgramCounter::Jump(self.stack.pop().unwrap() as u16)
     }
     
-    fn op_call_addr(&self) -> ProgramCounter {
-        ProgramCounter::Call
+    fn op_call_addr(&mut self, nnn: u16) -> ProgramCounter {
+        self.stack.push(self.pc);
+        ProgramCounter::Jump(nnn)
     }
     
     fn op_jp_addr(&self, nnn: u16) -> ProgramCounter {
@@ -309,7 +303,22 @@ impl CPU {
         ProgramCounter::Next
     }
 
-    fn op_dxyn(&mut self, x: usize, y: usize, n: u8) -> ProgramCounter {
+    fn op_dxyn(&mut self, vx: usize, vy: usize, n: u8) -> ProgramCounter {
+        let (w, h) = self.window;
+        self.v[0xF] = 0;
+        
+        for i in 0..n {
+            let y = (self.v[vy] + i) % h;
+            let sprite = self.ram[(self.i + i as u16) as usize];
+            for j in 0..8 {
+                let x = (self.v[vx] + j) % w;
+                let bit = (sprite >> (7 - j)) & 1;
+                self.v[0xF] = bit & self.vram[y as usize][x as usize];
+                self.vram[y as usize][x as usize] ^= bit; 
+            }
+        }
+
+        self.vram_updated = true;
         ProgramCounter::Next
     }
 
@@ -321,7 +330,7 @@ impl CPU {
         keypad[self.v[x] as usize].eq(&0x1).then(|| ProgramCounter::Next).unwrap_or(ProgramCounter::Skip)
     }
 
-    fn op_fx07(&self, x: usize) -> ProgramCounter {
+    fn op_fx07(&mut self, x: usize) -> ProgramCounter {
         self.v[x] = self.delay_timer;
         ProgramCounter::Next
     }
