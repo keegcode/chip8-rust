@@ -1,6 +1,4 @@
-use std::thread::yield_now;
-
-use sdl2::{pixels::Color, rect::Rect, Sdl, event::Event};
+use sdl2::{event::{Event, EventPollIterator}, pixels::Color, rect::Rect};
 
 pub struct Display {
     canvas: sdl2::render::Canvas<sdl2::video::Window>,
@@ -11,8 +9,7 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn create(width: u8, height: u8, scale: u16) -> Result<Display, String> {
-            let sdl = sdl2::init()?;
+    pub fn create(sdl: &sdl2::Sdl, (width, height, scale): (u8, u8, u16)) -> Result<Display, String> {
             let video = sdl.video()?;
 
             let window = video
@@ -25,12 +22,12 @@ impl Display {
                 .event_pump()
                 .map_err(|e| e.to_string())?;
         
-            let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+            let canvas = window.into_canvas().present_vsync().build().map_err(|e| e.to_string())?;
 
             Ok(Display{canvas, event_pump, scale, height, width}) 
     }
-    pub fn poll(&mut self) -> Option<Event> {
-        self.event_pump.poll_event()
+    pub fn poll(&mut self) -> EventPollIterator {
+        self.event_pump.poll_iter()
     }
     pub fn draw(&mut self, vram: &Vec<Vec<u8>>)-> Result<(), String> {
         for (y, row) in vram.iter().enumerate() {
@@ -44,6 +41,9 @@ impl Display {
     }
     pub fn get_window_size(&self) -> (u8, u8) {
         (self.width, self.height)
+    }
+    pub fn clear(&mut self) -> () {
+        self.canvas.clear()
     }
 }
 
