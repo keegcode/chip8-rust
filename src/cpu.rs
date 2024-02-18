@@ -295,8 +295,9 @@ impl CPU {
             for j in 0..8 {
                 let x = (self.v[vx] + j) % w;
                 let bit = (sprite >> (7 - j)) & 1;
-                self.v[0xF] = bit & self.vram[y as usize][x as usize];
+                let pixel = self.vram[y as usize][x as usize];
                 self.vram[y as usize][x as usize] ^= bit; 
+                if pixel == 1 && bit == 1 { self.v[0xF] = 1 };
             }
         }
 

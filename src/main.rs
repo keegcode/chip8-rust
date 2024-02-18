@@ -39,7 +39,6 @@ fn main() -> Result<(), String> {
         }
 
         if cpu.vram_updated {
-            display.clear();
             display.draw(&cpu.vram)?;
         }
 
@@ -63,8 +62,6 @@ fn main() -> Result<(), String> {
                 _ => ()
             }
         }
-        
-        thread::sleep(Duration::from_secs_f64(1.0 / 500.0));
     }
 
     Ok(())

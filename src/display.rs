@@ -42,9 +42,6 @@ impl Display {
     pub fn get_window_size(&self) -> (u8, u8) {
         (self.width, self.height)
     }
-    pub fn clear(&mut self) -> () {
-        self.canvas.clear()
-    }
 }
 
 
